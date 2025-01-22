@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 
 import base64
+import collections
 import datetime
 import json
 import os
@@ -20,6 +21,9 @@ __doc__ = '''StaphMB - A Telegram Group Management Bot infected by _S. aureus_
 Synopsis:\n\tStaphMbot.py sqlite.db API-Key
 
 Version:\n\t'''+str(__version__)
+
+MEDIA_GROUPS_CACHE = collections.OrderedDict()
+MEDIA_GROUPS_CACHE_LIMIT = 1024
 
 class APIError(Exception):
     def __init__(self,module,info):
@@ -406,6 +410,10 @@ def processItem(message,db,api):
                     api.sendMessage(message['message']['chat']['id'],getNameRep(message['message']['from'])+' 發送的一個 Sticker 由於被禁止於此群使用，已被刪除。')
                 except APIError:
                     api.sendMessage(message['message']['chat']['id'],'注意：本 Sticker 禁止於此群使用。',{'reply_to_message_id':message['message']['message_id']})
+    if message['message'].get('media_group_id'):
+        if len(MEDIA_GROUPS_CACHE) >= MEDIA_GROUPS_CACHE_LIMIT:
+            MEDIA_GROUPS_CACHE.popitem(last=False) # i.e. popleft
+        MEDIA_GROUPS_CACHE.setdefault((message['message']['chat']['id'], message['message']['media_group_id']), set()).add(message['message']['message_id'])
     if 'text' in message['message'] and message['message']['text']:
         # Process bot command
         if message['message']['text'][0] == '/':
@@ -758,9 +766,14 @@ def processItem(message,db,api):
                         api.query('kickChatMember',{'chat_id':message['message']['chat']['id'],'user_id':message['message']['reply_to_message']['from']['id']})
 #                        api.sendMessage(db[1].getItem(str(message['message']['chat']['id'],'notify')),l10n.notifyG11(str(int(time.time())),getNameRep(message['message']['reply_to_message']['from']),str(message['message']['reply_to_message']['from']['id']),getNameRep(message['message']['from']),message['message']['reply_to_message']))
                         tmp = db[1].getItem(str(message['message']['chat']['id']),'notify').split('|')
-                        api.sendMessage(tmp[0],("" if len(tmp) == 1 else tgapi.escape(tmp[1])+'\n')+getNameRep(message['message']['from'])+" has killed a #G11 from "+getNameRep(message['message']['reply_to_message']['from'])+"("+ str(message['message']['reply_to_message']['from']['id'])+") with content of\n"+getMsgText(message['message']['reply_to_message']))
+                        albumMessageIds = MEDIA_GROUPS_CACHE.get((message['message']['chat']['id'], message['message']['reply_to_message'].get('media_group_id')))
+                        api.sendMessage(tmp[0],("" if len(tmp) == 1 else tgapi.escape(tmp[1])+'\n')+getNameRep(message['message']['from'])+" has killed a #G11 from "+getNameRep(message['message']['reply_to_message']['from'])+"("+ str(message['message']['reply_to_message']['from']['id'])+") with content of\n"+getMsgText(message['message']['reply_to_message'])+("\n(&lt;Album&gt;)" if albumMessageIds else ""))
                         try:
-                            api.query('deleteMessage',{'chat_id':message['message']['chat']['id'],'message_id':message['message']['reply_to_message']['message_id']})
+                            if albumMessageIds:
+                                # assert message['message']['reply_to_message']['message_id'] in albumMessageIds
+                                api.query('deleteMessages',{'chat_id':message['message']['chat']['id'],'message_ids':list(albumMessageIds)})
+                            else:
+                                api.query('deleteMessage',{'chat_id':message['message']['chat']['id'],'message_id':message['message']['reply_to_message']['message_id']})
                         except APIError:
                             api.sendMessage(message['message']['chat']['id'],'機器人似乎在試圖刪除該消息時遇到了一些困難。',{'reply_to_message_id':message['message']['message_id']})
                         else:
